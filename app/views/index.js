@@ -5,9 +5,10 @@ require('angular')
 require('angular-material')
 require('angular-animate')
 require('angular-aria')
+require('angular-messages')
 require('md-pickers')
 const moment = require('moment')
-const {ipcRenderer, remote, shell} = require('electron')
+const { ipcRenderer, remote, shell } = require('electron')
 const log = require('electron-log')
 const lockedData = require('../lib/lockedData')
 const globalSettings = require('../lib/globalSettings')
@@ -43,6 +44,12 @@ app.config(function ($mdDateLocaleProvider) {
   $mdDateLocaleProvider.firstDayOfWeek = 1
 })
 
+app.run(['$location', '$mdpLocale', function ($location, $mdpLocale) {
+  $mdpLocale.time.openOnClick = true
+  $mdpLocale.time.autoSwitch = true
+  $mdpLocale.time.ampm = false
+}])
+
 app.controller('indexController', ['$scope', '$interval', '$mdDialog', '$mdToast', '$sce', function ($scope, $interval, $mdDialog, $mdToast, $sce) {
   var isCurrentWeekSelected = true
   var previousDayToday = moment()
@@ -56,7 +63,7 @@ app.controller('indexController', ['$scope', '$interval', '$mdDialog', '$mdToast
 
   $scope.selectedWeekCalendar = $scope.selectedWeek = moment().startOf('isoWeek')
   $scope.weekDays = []
-  $scope.hoursToWork = {time: 0, hours: 0, minutes: 0}
+  $scope.hoursToWork = { time: 0, hours: 0, minutes: 0 }
   $scope.processedData = {}
   $scope.weekPlan = []
   $scope.totals = {
@@ -114,7 +121,11 @@ app.controller('indexController', ['$scope', '$interval', '$mdDialog', '$mdToast
   }
 
   $scope.setOverrideStartTime = function (key) {
-    $scope.processedData.days[key].overrideStartTime = $scope.selectedDayDetails.day.overrideStartTime
+    if ($scope.selectedDayDetails.day.overrideStartTimeDate) {
+      $scope.processedData.days[key].overrideStartTime = moment($scope.selectedDayDetails.day.overrideStartTimeDate, 'HH:mm').format('HH:mm')
+    } else {
+      $scope.processedData.days[key].overrideStartTime = null
+    }
     ipcRenderer.send('setOverrideStartTime', $scope.processedData.days[key].date.valueOf(), $scope.processedData.days[key].overrideStartTime)
     calculateTotal()
     refreshDayInfo()
@@ -122,8 +133,23 @@ app.controller('indexController', ['$scope', '$interval', '$mdDialog', '$mdToast
   }
 
   $scope.setOverrideStopTime = function (key) {
-    $scope.processedData.days[key].overrideStopTime = $scope.selectedDayDetails.day.overrideStopTime
+    if ($scope.selectedDayDetails.day.overrideStopTimeDate) {
+      $scope.processedData.days[key].overrideStopTime = moment($scope.selectedDayDetails.day.overrideStopTimeDate, 'HH:mm').format('HH:mm')
+    } else {
+      $scope.processedData.days[key].overrideStopTime = null
+    }
     ipcRenderer.send('setOverrideStopTime', $scope.processedData.days[key].date.valueOf(), $scope.processedData.days[key].overrideStopTime)
+    calculateTotal()
+    refreshDayInfo()
+    setSelectedDayDetails(key)
+  }
+
+  $scope.resetOverrideTime = function (key) {
+    $scope.processedData.days[key].overrideStartTime = null
+    $scope.processedData.days[key].overrideStartTimeDate = null
+    $scope.processedData.days[key].overrideStopTime = null
+    $scope.processedData.days[key].overrideStopTimeDate = null
+    ipcRenderer.send('resetOverrideTime', $scope.processedData.days[key].date.valueOf(), $scope.processedData.days[key].overrideStopTime)
     calculateTotal()
     refreshDayInfo()
     setSelectedDayDetails(key)
@@ -304,14 +330,18 @@ app.controller('indexController', ['$scope', '$interval', '$mdDialog', '$mdToast
   $scope.showPreviousWeek = function () {
     if ($scope.hasPreviousWeek) {
       var newWeek = moment($scope.selectedWeek).add(-1, 'week')
-      $scope.setSelectedWeek(newWeek)
+      getAvailableDatesForCalendar(function () {
+        $scope.setSelectedWeek(newWeek)
+      })
     }
   }
 
   $scope.showNextWeek = function () {
     if ($scope.hasNextWeek) {
       var newWeek = moment($scope.selectedWeek).add(1, 'week')
-      $scope.setSelectedWeek(newWeek)
+      getAvailableDatesForCalendar(function () {
+        $scope.setSelectedWeek(newWeek)
+      })
     }
   }
 
@@ -555,6 +585,7 @@ app.controller('indexController', ['$scope', '$interval', '$mdDialog', '$mdToast
             })
           } else {
             console.log('reloading current week information')
+            $scope.saveWeekPlan()
             lockedData.load($scope.selectedWeek, function (err, data) {
               if (err) { throw err }
               processWeekInformation(null, data)
@@ -643,6 +674,16 @@ app.controller('indexController', ['$scope', '$interval', '$mdDialog', '$mdToast
 
   function setSelectedDayDetails (key) {
     var day = $scope.processedData.days[key]
+    if (day.overrideStartTime) {
+      day.overrideStartTimeDate = moment(day.overrideStartTime, 'HH:mm').toDate()
+    } else {
+      day.overrideStartTimeDate = null
+    }
+    if (day.overrideStopTime) {
+      day.overrideStopTimeDate = moment(day.overrideStopTime, 'HH:mm').toDate()
+    } else {
+      day.overrideStopTimeDate = null
+    }
 
     var minutes = (day.time.pause % 1) * 60
     var hours = Math.trunc(day.time.pause)
@@ -706,7 +747,7 @@ app.controller('indexController', ['$scope', '$interval', '$mdDialog', '$mdToast
   })
 
   ipcRenderer.on('updateNotAvailable', function (event, info) {
-    console.log('no updates available', info)
+    console.log('no updates available')
     $scope.isUpdateAvailable = false
     $scope.checkingForUpdates = false
     $scope.showUpdateNotAvailable = true
@@ -826,3 +867,11 @@ function WeekPlanController ($scope, $mdDialog) {
     return total
   }
 }
+
+// Oops, we don't want to show another website instead of the interface!
+document.addEventListener('click', function (event) {
+  if (event.target.tagName === 'A' && event.target.href.startsWith('http')) {
+    event.preventDefault()
+    shell.openExternal(event.target.href)
+  }
+})

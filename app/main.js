@@ -1,10 +1,12 @@
 'use strict'
 
+const APP_ID = 'ca.cgagnier.timesheethero'
+
 const path = require('path')
 const moment = require('moment')
 const log = require('electron-log')
-const {app, ipcMain, Menu, Tray, nativeImage} = require('electron')
-const {autoUpdater} = require('electron-updater')
+const { app, ipcMain, Menu, Tray, nativeImage } = require('electron')
+const { autoUpdater } = require('electron-updater')
 const isDev = require('electron-is-dev')
 const mkdirp = require('mkdirp')
 const timeTracker = new (require('./lib/timeTracker'))()
@@ -24,12 +26,16 @@ console.log = log.info
 autoUpdater.logger = log
 autoUpdater.logger.transports.file.level = 'info'
 
+autoUpdater.fullChangelog = true
+
 // prevent multiple instances
 var shouldQuit = app.makeSingleInstance(function (commandLine, workingDirectory) {
   if (windowManager) {
     windowManager.createWindow()
   }
 })
+
+app.setAppUserModelId(APP_ID)
 
 if (shouldQuit) {
   console.log('App is already running...')
@@ -47,6 +53,14 @@ app.on('activate', function () {
   // On OS X it's common to re-create a window in the app when the
   // dock icon is clicked and there are no other windows open.
   windowManager.createWindow()
+})
+
+app.on('before-quit', function () {
+  lockedData.addLockStateChanged(true, null, function (err, success) {
+    if (err) {
+      throw err
+    }
+  })
 })
 
 var trayIcon
@@ -86,7 +100,7 @@ app.on('ready', function () {
         timeTracker.stop()
         if (!isSaving && !isSavingDone) {
           isSaving = true
-          lockedData.addData(true, null, function (err, success) {
+          lockedData.addLockStateChanged(true, null, function (err, success) {
             if (err) {
               throw err
             }
@@ -106,7 +120,7 @@ app.on('ready', function () {
 
   // Save as unlocked when the app launch as we assume the computer is unlocked
   console.log('Saving unlock...')
-  lockedData.addData(false, null, function (err, success) {
+  lockedData.addLockStateChanged(false, null, function (err, success) {
     console.log('Creating the main window...')
     windowManager.createWindow()
 
@@ -157,7 +171,8 @@ app.on('ready', function () {
         notifier.notify({
           title: 'Timesheet Hero',
           message: 'The app is still running in the background.',
-          icon: trayIconPath
+          icon: trayIconPath,
+          appID: APP_ID
         })
 
         firstTimeClosing = false
@@ -200,10 +215,18 @@ app.on('ready', function () {
     })
   })
 
+  ipcMain.on('resetOverrideTime', (event, dateMs) => {
+    var date = moment(dateMs)
+    lockedData.resetOverrideTime(date, function (err) {
+      if (err) { throw err }
+    })
+  })
+
   ipcMain.on('saveWeekPlan', (event, dateMs, weekPlan) => {
     var date = moment(dateMs)
     lockedData.saveWeekPlan(date, weekPlan, function (err) {
       if (err) { throw err }
+      console.log('Week plan changed')
     })
   })
 
@@ -211,13 +234,14 @@ app.on('ready', function () {
     notifier.notify({
       title: title || 'Timesheet Hero',
       message: content,
-      icon: trayIconPath
+      icon: trayIconPath,
+      appID: APP_ID
     })
   })
 
   ipcMain.on('checkForUpdates', (event, title) => {
     console.log('Checking for updates (manually)...')
-    autoUpdater.checkForUpdates()
+    checkForUpdates()
   })
 
   ipcMain.on('resetUI', (event) => {
@@ -247,11 +271,21 @@ app.on('ready', function () {
     windowManager.closeWindow()
   })
 
+  function checkForUpdates () {
+    try {
+      autoUpdater.checkForUpdates()
+    } catch (ex) {
+      console.log('Error while trying to check for updates:')
+      console.error(ex)
+      windowManager.sendToRenderer('updateNotAvailable')
+    }
+  }
+
   // if(!isDev) {
-  autoUpdater.checkForUpdates()
+  checkForUpdates()
 
   setInterval(function () {
-    autoUpdater.checkForUpdates()
+    checkForUpdates()
   }, 21600000) // 6hrs
 
   // }

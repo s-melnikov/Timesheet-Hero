@@ -16,7 +16,7 @@ module.exports = lockedData
 
 var folder = path.join(os.homedir(), 'timesheet-hero/dates')
 
-lockedData.addData = function (isLocked, date, callback) {
+lockedData.addLockStateChanged = function (isLocked, date, callback) {
   if (!date) {
     date = moment()
   }
@@ -168,6 +168,33 @@ lockedData.setOverrideStopTime = function (date, time, callback) {
   })
 }
 
+lockedData.resetOverrideTime = function (date, callback) {
+  if (!date) {
+    return callback(new Error('No date!'))
+  }
+
+  getFilePath(date, function (err, filePath) {
+    if (err) { return callback(err) }
+
+    lockedData.load(date, function (err, data) {
+      if (err) { return callback(err) }
+
+      var arrayKey = date.format('YYYY-MM-DD')
+      if (!data.dates[arrayKey]) {
+        data.dates[arrayKey] = getDefaultObject()
+      }
+
+      data.dates[arrayKey].overrideStartTime = null
+      data.dates[arrayKey].overrideStopTime = null
+
+      saveData(date, data, function (err) {
+        if (err) { return callback(err) }
+        return callback(null, true)
+      })
+    })
+  })
+}
+
 lockedData.saveWeekPlan = function (date, weekPlan, callback) {
   if (!date) {
     return callback(new Error('No date!'))
@@ -275,7 +302,7 @@ function saveData (date, data, callback) {
   getFilePath(date, function (err, filePath) {
     if (err) { return callback(err) }
 
-    jsonfile.writeFile(filePath, data, {spaces: 2}, function (err) {
+    jsonfile.writeFile(filePath, data, { spaces: 2 }, function (err) {
       if (err) { return callback(err) }
       lockedData.emit('dataChange', date, data)
       return callback()

@@ -6,6 +6,7 @@ const path = require('path')
 const url = require('url')
 const isDev = require('electron-is-dev')
 const windowStateKeeper = require('electron-window-state')
+const lockedData = require('./lockedData')
 var EventEmitter = require('events').EventEmitter
 var windowIconPath = ''
 
@@ -60,6 +61,14 @@ windowManager.createWindow = function () {
   }
   mainWindowState.manage(windowManager.browserWindow)
 
+  windowManager.browserWindow.on('session-end', function () {
+    lockedData.addLockStateChanged(true, null, function (err, success) {
+      if (err) {
+        throw err
+      }
+    })
+  })
+
   windowManager.browserWindow.on('closed', function (event) {
     console.log('window is closed.')
     windowManager.browserWindow = null
@@ -78,6 +87,7 @@ windowManager.createWindow = function () {
 windowManager.closeWindow = function () {
   if (windowManager.isWindowCreated()) {
     windowManager.browserWindow.hide()
+    windowManager.emit('windowClosed', null)
   }
 }
 
